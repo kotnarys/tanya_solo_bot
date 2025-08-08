@@ -2,12 +2,23 @@ import asyncio
 from typing import Optional
 import logging
 from datetime import datetime
+import os
+from dotenv import load_dotenv
+
+# Загружаем переменные окружения
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# OpenAI конфигурация
-OPENAI_API_KEY = "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"
-ASSISTANT_ID = "asst_9sI7k0guXxzcJp2z4fcaiJfx"
+# OpenAI конфигурация из переменных окружения
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+ASSISTANT_ID = os.getenv("OPENAI_ASSISTANT_ID")
+
+# Проверяем наличие ключей
+if not OPENAI_API_KEY:
+    logger.error("OPENAI_API_KEY не найден в переменных окружения!")
+if not ASSISTANT_ID:
+    logger.error("OPENAI_ASSISTANT_ID не найден в переменных окружения!")
 
 # Дата начала доступа к OpenAI для подписчиков
 OPENAI_ACCESS_START_DATE = datetime(2025, 7, 30, 15, 0, 0)  # 30 июля 2025 15:00 МСК
@@ -26,12 +37,15 @@ class OpenAIClient:
         if self.client is None:
             try:
                 import openai
+                logger.info(f"Инициализация OpenAI клиента с ключом: {OPENAI_API_KEY[:20]}...")
                 self.client = openai.OpenAI(
                     api_key=OPENAI_API_KEY,
                     timeout=30.0
                 )
+                logger.info("OpenAI клиент успешно инициализирован")
             except Exception as e:
-                logger.error(f"Ошибка инициализации OpenAI клиента: {e}")
+                logger.error(f"Ошибка инициализации OpenAI клиента: {str(e)}")
+                logger.error(f"Тип ошибки: {type(e).__name__}")
                 return None
         return self.client
     
@@ -61,10 +75,12 @@ class OpenAIClient:
     async def create_thread(self, user_id: int) -> Optional[str]:
         """Создает новый thread для пользователя"""
         if not self.has_openai_access(user_id):
+            logger.warning(f"Пользователь {user_id} не имеет доступа к OpenAI")
             return None
         
         client = self._get_client()
         if not client:
+            logger.error(f"Не удалось инициализировать OpenAI клиент для пользователя {user_id}")
             return None
             
         try:
@@ -72,7 +88,9 @@ class OpenAIClient:
             logger.info(f"Создан новый thread {thread.id} для пользователя {user_id}")
             return thread.id
         except Exception as e:
-            logger.error(f"Ошибка создания thread для пользователя {user_id}: {e}")
+            logger.error(f"Ошибка создания thread для пользователя {user_id}: {str(e)}")
+            logger.error(f"API Key: {OPENAI_API_KEY[:20]}... (первые 20 символов)")
+            logger.error(f"Assistant ID: {ASSISTANT_ID}")
             return None
     
     async def send_message(self, user_id: int, thread_id: str, message: str) -> Optional[str]:

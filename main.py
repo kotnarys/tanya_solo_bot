@@ -328,7 +328,7 @@ async def main():
     # Запуск webhook сервера в отдельном потоке
     webhook_thread = threading.Thread(target=run_webhook_server, daemon=True)
     webhook_thread.start()
-    print("🌐 Webhook сервер запущен на порту 5000")
+    print("Webhook сервер запущен на порту 5000")
     
     # Запуск фоновых задач
     auto_spam_task = asyncio.create_task(start_auto_spam_task(bot))
@@ -336,7 +336,7 @@ async def main():
     daily_reset_task = asyncio.create_task(daily_thread_reset_task())
     
     # Запуск бота
-    print("🤖 Telegram бот запущен и работает...")
+    print("Telegram бот запущен и работает...")
     try:
         await dp.start_polling(bot)
     except KeyboardInterrupt:
