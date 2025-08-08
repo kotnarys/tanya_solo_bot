@@ -253,8 +253,8 @@ def not_found(error):
 def run_webhook_server():
     """Запуск webhook сервера в отдельном потоке"""
     try:
-        print("Webhook сервер стартует на 0.0.0.0:5000")
-        app.run(host='0.0.0.0', port=5000, debug=False)
+        print("Webhook сервер стартует на 0.0.0.0:8080")
+        app.run(host='0.0.0.0', port=8080, debug=False)
     except Exception as e:
         print(f"ОШИБКА webhook сервера: {e}")
 
@@ -336,7 +336,7 @@ async def main():
     # Запуск webhook сервера в отдельном потоке
     webhook_thread = threading.Thread(target=run_webhook_server, daemon=True)
     webhook_thread.start()
-    print("Webhook сервер запущен на порту 5000")
+    print("Webhook сервер запущен на порту 8080")
     
     # Запуск фоновых задач
     auto_spam_task = asyncio.create_task(start_auto_spam_task(bot))
