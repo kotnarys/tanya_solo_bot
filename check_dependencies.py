@@ -49,8 +49,16 @@ def check_dependencies():
     try:
         import openai
         print(f"Тест OpenAI клиента...")
-        client = openai.OpenAI(api_key="test_key")
-        print("✅ OpenAI клиент создается без ошибок")
+        
+        # Пробуем создать клиент с минимальными параметрами
+        try:
+            client = openai.OpenAI(api_key="test_key", timeout=30.0)
+            print("✅ OpenAI клиент создается без ошибок (с timeout)")
+        except TypeError:
+            # Если timeout не поддерживается, пробуем без него
+            client = openai.OpenAI(api_key="test_key")
+            print("✅ OpenAI клиент создается без ошибок (без timeout)")
+        
     except Exception as e:
         print(f"❌ Ошибка создания OpenAI клиента: {e}")
         all_ok = False
