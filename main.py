@@ -19,15 +19,17 @@ from core.database import init_db, db
 from background.kupi_video import kupi_video_background_task
 from background.daily_thread_reset import daily_thread_reset_task
 
-# Настройка логирования - только важные сообщения
+# Настройка логирования - только критические ошибки
 logging.basicConfig(
-    level=logging.WARNING,
+    level=logging.CRITICAL,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
-# Включаем ERROR логи для наших модулей
-logging.getLogger('handlers.ai_chat').setLevel(logging.ERROR)
-logging.getLogger('openai_client').setLevel(logging.ERROR)
+# Отключаем лишние логи
+logging.getLogger('handlers.ai_chat').setLevel(logging.CRITICAL)
+logging.getLogger('core.openai_client').setLevel(logging.CRITICAL)
+logging.getLogger('background.kupi_video').setLevel(logging.CRITICAL)
+logging.getLogger('background.auto_spam').setLevel(logging.CRITICAL)
 logger = logging.getLogger(__name__)
 
 # =================== WEBHOOK SERVER ===================
