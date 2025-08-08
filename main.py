@@ -145,8 +145,10 @@ def get_user_info(user_id):
 
 @app.route('/webhook/getcourse', methods=['POST'])
 def getcourse_webhook():
+    print(f"WEBHOOK: Получен запрос: {request.method} {request.url}")
     try:
         data = request.get_json()
+        print(f"WEBHOOK: Данные - {data}")
         user_id, payment_id = extract_user_id_from_webhook_data(data)
         
         if user_id:
@@ -250,7 +252,11 @@ def not_found(error):
 
 def run_webhook_server():
     """Запуск webhook сервера в отдельном потоке"""
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    try:
+        print("Webhook сервер стартует на 0.0.0.0:5000")
+        app.run(host='0.0.0.0', port=5000, debug=False)
+    except Exception as e:
+        print(f"ОШИБКА webhook сервера: {e}")
 
 # =================== END WEBHOOK SERVER ===================
 
