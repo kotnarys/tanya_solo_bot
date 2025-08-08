@@ -37,20 +37,10 @@ class OpenAIClient:
         if self.client is None:
             try:
                 import openai
-                
-                # Пробуем разные варианты инициализации
-                try:
-                    # Новая версия API
-                    self.client = openai.OpenAI(api_key=OPENAI_API_KEY)
-                except (TypeError, AttributeError) as e:
-                    try:
-                        # Старая версия с другим API
-                        openai.api_key = OPENAI_API_KEY
-                        self.client = openai
-                    except Exception:
-                        return None
-                        
+                # Просто создаем клиент без лишних параметров
+                self.client = openai.OpenAI(api_key=OPENAI_API_KEY)
             except Exception as e:
+                print(f"DEBUG: Ошибка создания OpenAI клиента: {e}")
                 return None
         return self.client
     
@@ -90,12 +80,9 @@ class OpenAIClient:
             
         try:
             thread = await asyncio.to_thread(client.beta.threads.create)
-            logger.info(f"Создан новый thread {thread.id} для пользователя {user_id}")
             return thread.id
         except Exception as e:
-            logger.error(f"Ошибка создания thread для пользователя {user_id}: {str(e)}")
-            logger.error(f"API Key: {OPENAI_API_KEY[:20]}... (первые 20 символов)")
-            logger.error(f"Assistant ID: {ASSISTANT_ID}")
+            print(f"DEBUG: Ошибка создания thread: {e}")
             return None
     
     async def send_message(self, user_id: int, thread_id: str, message: str) -> Optional[str]:
