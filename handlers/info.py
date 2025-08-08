@@ -1,10 +1,14 @@
 import os
 import asyncio
+import logging
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, FSInputFile, InputMediaPhoto
 from keyboards.inline import get_avatar_info_menu, get_helps_menu, get_reviews_menu
-from config import TEXTS, IMAGES, REVIEWS_IMAGES
-from auto_spam import update_user_activity
+from core.config import TEXTS, IMAGES, REVIEWS_IMAGES
+from background.auto_spam import update_user_activity
+from utils.message_utils import answer_split_text
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 
@@ -25,7 +29,8 @@ async def what_is_avatar_handler(callback: CallbackQuery):
             reply_markup=get_avatar_info_menu()
         )
     else:
-        await callback.message.answer(
+        await answer_split_text(
+            callback.message,
             TEXTS["what_is_avatar"], 
             reply_markup=get_avatar_info_menu()
         )
@@ -52,7 +57,8 @@ async def what_helps_handler(callback: CallbackQuery):
             reply_markup=get_helps_menu()
         )
     else:
-        await callback.message.answer(
+        await answer_split_text(
+            callback.message,
             TEXTS["what_helps"], 
             reply_markup=get_helps_menu()
         )
@@ -71,7 +77,8 @@ async def reviews_handler(callback: CallbackQuery):
     # НЕ удаляем предыдущее сообщение - отправляем новое
     
     # Сначала отправляем основной текст с кнопками
-    await callback.message.answer(
+    await answer_split_text(
+        callback.message,
         TEXTS["reviews"], 
         reply_markup=get_reviews_menu()
     )
@@ -90,27 +97,16 @@ async def reviews_handler(callback: CallbackQuery):
                     photo = FSInputFile(image_path)
                     media_group.append(InputMediaPhoto(media=photo))
             except Exception as e:
-                print(f"Ошибка при обработке файла {image_path}: {e}")
+                logger.error(f"Ошибка при обработке файла {image_path}: {e}")
     
-    # Отправляем медиагруппы (Telegram позволяет максимум 10 фото в группе)
+    # Отправляем медиагруппу с фотографиями отзывов
     if media_group:
         try:
-            # Разбиваем на группы по 10 фотографий
-            chunk_size = 10
-            for i in range(0, len(media_group), chunk_size):
-                chunk = media_group[i:i + chunk_size]
-                await callback.message.answer_media_group(chunk)
-                
-                # Небольшая пауза между группами
-                if i + chunk_size < len(media_group):
-                    await asyncio.sleep(0.5)
-                    
+            # Отправляем все фото одной группой (максимум 10 фото в Telegram)
+            await callback.message.answer_media_group(media_group)
         except Exception as e:
-            print(f"Ошибка отправки медиагруппы: {e}")
-            await callback.message.answer("📸 Ошибка загрузки фотографий отзывов. Попробуйте позже.")
-    else:
-        # Если фотографий нет, отправляем заглушку
-        await callback.message.answer("📸 Фотографии отзывов будут добавлены позже")
+            logger.error(f"Ошибка отправки медиагруппы отзывов: {e}")
+            await answer_split_text(callback.message, "📸 Ошибка загрузки фотографий отзывов. Попробуйте позже.")
     
     try:
         await callback.answer()

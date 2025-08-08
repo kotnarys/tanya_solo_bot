@@ -2,7 +2,10 @@ import requests
 import json
 import base64
 import time
-from config import GETCOURSE_API_URL, GETCOURSE_API_KEY
+import logging
+from core.config import GETCOURSE_API_URL, GETCOURSE_API_KEY
+
+logger = logging.getLogger(__name__)
 
 async def create_payment_link(user_id: int, tariff: str, price: int, tariff_name: str, user_data: dict):
     """
@@ -10,7 +13,7 @@ async def create_payment_link(user_id: int, tariff: str, price: int, tariff_name
     
     Args:
         user_id: ID пользователя в Telegram
-        tariff: Тип тарифа (basic/vip)
+        tariff: Тип тарифа (basic/vip/course)
         price: Цена тарифа
         tariff_name: Название тарифа
         user_data: Данные пользователя (email, name, phone)
@@ -61,25 +64,25 @@ async def create_payment_link(user_id: int, tariff: str, price: int, tariff_name
             payment_link = result["result"].get("payment_link")
             
             if payment_link:
-                print(f"Создана ссылка на оплату для пользователя {user_id}, тариф {tariff}, ID: {payment_id}")
+                logger.info(f"Создана ссылка на оплату для пользователя {user_id}, тариф {tariff}, ID: {payment_id}")
                 return payment_link
             else:
-                print(f"GetCourse вернул успех, но без ссылки на оплату: {result}")
+                logger.error(f"GetCourse вернул успех, но без ссылки на оплату: {result}")
                 return None
         else:
             error_message = result.get("result", {}).get("error_message", "Неизвестная ошибка")
-            print(f"Ошибка создания заказа в GetCourse: {error_message}")
-            print(f"Полный ответ: {result}")
+            logger.error(f"Ошибка создания заказа в GetCourse: {error_message}")
+            logger.error(f"Полный ответ: {result}")
             return None
             
     except requests.exceptions.RequestException as e:
-        print(f"Ошибка сети при запросе к GetCourse: {e}")
+        logger.error(f"Ошибка сети при запросе к GetCourse: {e}")
         return None
     except json.JSONDecodeError as e:
-        print(f"Ошибка декодирования JSON ответа от GetCourse: {e}")
+        logger.error(f"Ошибка декодирования JSON ответа от GetCourse: {e}")
         return None
     except Exception as e:
-        print(f"Неожиданная ошибка при работе с GetCourse API: {e}")
+        logger.error(f"Неожиданная ошибка при работе с GetCourse API: {e}")
         return None
 
 def validate_payment_webhook(webhook_data: dict) -> dict:
@@ -115,5 +118,5 @@ def validate_payment_webhook(webhook_data: dict) -> dict:
         return None
         
     except (ValueError, IndexError) as e:
-        print(f"Ошибка парсинга webhook данных: {e}")
+        logger.error(f"Ошибка парсинга webhook данных: {e}")
         return None

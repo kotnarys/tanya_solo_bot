@@ -1,7 +1,8 @@
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from keyboards.inline import get_support_menu
-from config import SUPPORT_USERNAME
+from core.config import SUPPORT_USERNAME
+from utils.message_utils import answer_split_text
 
 router = Router()
 
@@ -18,6 +19,6 @@ async def support_handler(callback: CallbackQuery):
 Или нажмите кнопку ниже для быстрого перехода в чат заботы."""
     
     # НЕ удаляем предыдущее сообщение - отправляем новое
-    await callback.message.answer(text, reply_markup=get_support_menu())
+    await answer_split_text(callback.message, text, reply_markup=get_support_menu())
     
     await callback.answer()
