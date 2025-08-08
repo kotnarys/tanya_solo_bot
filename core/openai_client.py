@@ -37,24 +37,20 @@ class OpenAIClient:
         if self.client is None:
             try:
                 import openai
-                logger.info(f"Инициализация OpenAI клиента с ключом: {OPENAI_API_KEY[:20]}...")
-                logger.info(f"Версия openai библиотеки: {openai.__version__}")
                 
-                # Пробуем создать клиент с минимальными параметрами
+                # Пробуем разные варианты инициализации
                 try:
-                    self.client = openai.OpenAI(
-                        api_key=OPENAI_API_KEY,
-                        timeout=30.0
-                    )
-                except TypeError as te:
-                    # Если не удается с timeout, пробуем без него
-                    logger.warning(f"Timeout параметр не поддерживается: {te}")
+                    # Новая версия API
                     self.client = openai.OpenAI(api_key=OPENAI_API_KEY)
-                
-                logger.info("OpenAI клиент успешно инициализирован")
+                except (TypeError, AttributeError) as e:
+                    try:
+                        # Старая версия с другим API
+                        openai.api_key = OPENAI_API_KEY
+                        self.client = openai
+                    except Exception:
+                        return None
+                        
             except Exception as e:
-                logger.error(f"Ошибка инициализации OpenAI клиента: {str(e)}")
-                logger.error(f"Тип ошибки: {type(e).__name__}")
                 return None
         return self.client
     
