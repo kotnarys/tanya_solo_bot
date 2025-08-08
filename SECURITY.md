@@ -34,3 +34,26 @@
 - Или другой безопасный способ управления секретами
 
 **НЕ используйте файл .env в продакшене!**
+
+## Устранение проблем совместимости
+
+### Ошибка "unexpected keyword argument 'proxies'"
+
+Если на Linux сервере возникает ошибка:
+```
+Client.__init__() got an unexpected keyword argument 'proxies'
+```
+
+**Решение:**
+1. Проверьте версии зависимостей: `python check_dependencies.py`
+2. Обновите до точных версий: `pip install -r requirements-lock.txt --upgrade`
+3. Если проблема остается, переустановите openai: `pip uninstall openai && pip install openai==1.54.4`
+
+### Проверка системы
+
+Перед запуском бота выполните:
+```bash
+python check_dependencies.py
+```
+
+Это покажет все проблемы с зависимостями и совместимостью.
