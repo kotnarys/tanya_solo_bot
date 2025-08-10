@@ -1006,6 +1006,44 @@ class Database:
         finally:
             conn.close()
     
+    def get_last_reset_info(self):
+        """
+        Получает информацию о последнем сбросе тредов
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        try:
+            # Получаем самую позднюю дату сброса
+            cursor.execute('''
+                SELECT MAX(last_reset_date), COUNT(*) 
+                FROM openai_threads 
+                WHERE last_reset_date IS NOT NULL
+            ''')
+            
+            result = cursor.fetchone()
+            last_reset_date = result[0] if result else None
+            threads_count = result[1] if result else 0
+            
+            # Получаем количество тредов без даты сброса
+            cursor.execute('''
+                SELECT COUNT(*) FROM openai_threads 
+                WHERE last_reset_date IS NULL
+            ''')
+            threads_without_reset = cursor.fetchone()[0]
+            
+            return {
+                'last_reset_date': last_reset_date,
+                'threads_with_reset': threads_count,
+                'threads_without_reset': threads_without_reset
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения информации о сбросе: {e}")
+            return None
+        finally:
+            conn.close()
+    
     def should_reset_thread_daily(self, user_id: int) -> bool:
         """
         Проверяет, нужно ли сбросить thread пользователя (ежедневный сброс)

@@ -283,6 +283,13 @@ async def system_check():
     # Проверка базы данных
     try:
         init_db()
+        # Проверяем информацию о последнем сбросе тредов
+        reset_info = db.get_last_reset_info()
+        if reset_info:
+            print(f"📊 Информация о сбросе тредов:")
+            print(f"   Последний сброс: {reset_info['last_reset_date'] or 'Никогда'}")
+            print(f"   Тредов со сбросом: {reset_info['threads_with_reset']}")
+            print(f"   Тредов без сброса: {reset_info['threads_without_reset']}")
     except Exception as e:
         errors.append(f"Ошибка инициализации БД: {e}")
     
@@ -342,6 +349,11 @@ async def main():
     auto_spam_task = asyncio.create_task(start_auto_spam_task(bot))
     kupi_video_task = asyncio.create_task(kupi_video_background_task(bot))
     daily_reset_task = asyncio.create_task(daily_thread_reset_task())
+    
+    # Выводим информацию о следующем сбросе
+    from background.daily_thread_reset import get_next_reset_time
+    next_reset = get_next_reset_time()
+    print(f"⏰ Следующий сброс тредов: {next_reset.strftime('%Y-%m-%d %H:%M %Z')}")
     
     # Запуск бота
     print("Telegram бот запущен и работает...")
