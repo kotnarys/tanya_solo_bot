@@ -431,6 +431,64 @@ class Database:
         subscription = self.get_user_subscription(user_id)
         return subscription.get('is_active', False)
     
+    def get_earliest_subscription_expiry(self):
+        """
+        Получает самую раннюю дату окончания активной подписки
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        try:
+            current_time = datetime.now().isoformat()
+            
+            # Находим минимальную дату окончания среди активных подписок
+            cursor.execute('''
+                SELECT MIN(expires_at), user_id
+                FROM user_subscriptions 
+                WHERE expires_at > ? AND is_active = TRUE
+            ''', (current_time,))
+            
+            result = cursor.fetchone()
+            
+            if result and result[0]:
+                expires_at = datetime.fromisoformat(result[0])
+                user_id = result[1]
+                days_left = (expires_at - datetime.now()).days
+                
+                # Получаем детали о всех подписках, которые заканчиваются в ближайшие дни
+                cursor.execute('''
+                    SELECT user_id, tariff_type, expires_at
+                    FROM user_subscriptions 
+                    WHERE expires_at > ? AND is_active = TRUE
+                    ORDER BY expires_at ASC
+                    LIMIT 10
+                ''', (current_time,))
+                
+                upcoming_expirations = []
+                for row in cursor.fetchall():
+                    exp_date = datetime.fromisoformat(row[2])
+                    upcoming_expirations.append({
+                        'user_id': row[0],
+                        'tariff': row[1],
+                        'expires_at': exp_date.strftime('%Y-%m-%d %H:%M'),
+                        'days_left': (exp_date - datetime.now()).days
+                    })
+                
+                return {
+                    'earliest_expiry': expires_at.strftime('%Y-%m-%d %H:%M'),
+                    'earliest_user_id': user_id,
+                    'days_until_expiry': days_left,
+                    'upcoming_10': upcoming_expirations
+                }
+            else:
+                return None
+                
+        except Exception as e:
+            logger.error(f"Ошибка получения даты окончания подписок: {e}")
+            return None
+        finally:
+            conn.close()
+    
     def get_subscription_stats(self) -> dict:
         """
         Получает статистику по подпискам

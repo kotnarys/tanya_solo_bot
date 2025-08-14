@@ -290,6 +290,17 @@ async def system_check():
             print(f"   Последний сброс: {reset_info['last_reset_date'] or 'Никогда'}")
             print(f"   Тредов со сбросом: {reset_info['threads_with_reset']}")
             print(f"   Тредов без сброса: {reset_info['threads_without_reset']}")
+        
+        # Проверяем ближайшие окончания подписок
+        expiry_info = db.get_earliest_subscription_expiry()
+        if expiry_info:
+            print(f"\n⏱️  Ближайшие окончания подписок:")
+            print(f"   Самая ранняя: {expiry_info['earliest_expiry']} (через {expiry_info['days_until_expiry']} дней)")
+            print(f"   User ID: {expiry_info['earliest_user_id']}")
+            if expiry_info['upcoming_10']:
+                print(f"\n   Топ-10 ближайших окончаний:")
+                for i, sub in enumerate(expiry_info['upcoming_10'][:5], 1):
+                    print(f"   {i}. User {sub['user_id']}: {sub['expires_at']} ({sub['tariff']}, осталось {sub['days_left']} дней)")
     except Exception as e:
         errors.append(f"Ошибка инициализации БД: {e}")
     
