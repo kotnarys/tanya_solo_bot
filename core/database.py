@@ -671,6 +671,9 @@ class Database:
                   AND u.user_id NOT IN (
                     SELECT user_id FROM kupi_video_sent
                   )
+                  AND u.user_id NOT IN (
+                    SELECT user_id FROM blocked_users
+                  )
             )
             SELECT user_id FROM eligible_users
         ''', (hour_ago, current_time))
