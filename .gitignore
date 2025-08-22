@@ -134,3 +134,7 @@ Thumbs.db
 *.backup
 tmp/
 temp/
+
+# Monitoring files
+monitoring_instructions.txt
+traffic_report_*.txt
