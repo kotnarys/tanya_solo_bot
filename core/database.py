@@ -1240,6 +1240,157 @@ class Database:
             return 0
         finally:
             conn.close()
+    
+    # ========== НОВЫЕ МЕТОДЫ ДЛЯ ОПТИМИЗАЦИИ ТРАФИКА ==========
+    
+    def get_media_file_id(self, file_path: str) -> Optional[str]:
+        """Получает file_id для медиафайла из кэша"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            "SELECT file_id FROM media_file_ids WHERE file_path = ?",
+            (file_path,)
+        )
+        result = cursor.fetchone()
+        conn.close()
+        
+        return result[0] if result else None
+    
+    def save_media_file_id(self, file_path: str, file_id: str, file_type: str, file_size: int = 0):
+        """Сохраняет file_id медиафайла в кэш"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT OR REPLACE INTO media_file_ids 
+            (file_path, file_id, file_type, file_size, last_used)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ''', (file_path, file_id, file_type, file_size))
+        
+        conn.commit()
+        conn.close()
+        logger.info(f"File ID сохранен: {file_path} -> {file_id}")
+    
+    def mark_user_blocked(self, user_id: int, reason: str = "Bot blocked by user"):
+        """Отмечает пользователя как заблокировавшего бота"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT OR REPLACE INTO blocked_users 
+            (user_id, blocked_at, reason)
+            VALUES (?, CURRENT_TIMESTAMP, ?)
+        ''', (user_id, reason))
+        
+        conn.commit()
+        conn.close()
+        logger.info(f"Пользователь {user_id} отмечен как заблокированный: {reason}")
+    
+    def is_user_blocked(self, user_id: int) -> bool:
+        """Проверяет, заблокировал ли пользователь бота"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            "SELECT 1 FROM blocked_users WHERE user_id = ?",
+            (user_id,)
+        )
+        result = cursor.fetchone()
+        conn.close()
+        
+        return result is not None
+    
+    def log_traffic(self, operation: str, user_id: int = None, data_type: str = None, 
+                    data_size: int = 0, file_path: str = None, status: str = "success", 
+                    error_message: str = None):
+        """Логирует трафик и операции для мониторинга"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO traffic_log 
+            (operation, user_id, data_type, data_size, file_path, status, error_message)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (operation, user_id, data_type, data_size, file_path, status, error_message))
+        
+        conn.commit()
+        conn.close()
+    
+    def update_daily_stats(self, **kwargs):
+        """Обновляет суточную статистику"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        today = datetime.now().strftime('%Y-%m-%d')
+        
+        # Создаем запись на сегодня если ее нет
+        cursor.execute('''
+            INSERT OR IGNORE INTO daily_stats (date) VALUES (?)
+        ''', (today,))
+        
+        # Обновляем переданные поля
+        for field, value in kwargs.items():
+            if field in ['total_messages', 'total_media_sent', 'total_bytes_sent', 
+                        'openai_requests', 'openai_bytes', 'blocked_users_count', 
+                        'new_users', 'active_users']:
+                cursor.execute(f'''
+                    UPDATE daily_stats 
+                    SET {field} = {field} + ?
+                    WHERE date = ?
+                ''', (value, today))
+        
+        conn.commit()
+        conn.close()
+    
+    def get_daily_report(self) -> str:
+        """Генерирует суточный отчет по трафику"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        today = datetime.now().strftime('%Y-%m-%d')
+        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        # Получаем статистику за сегодня
+        cursor.execute('SELECT * FROM daily_stats WHERE date = ?', (today,))
+        today_stats = cursor.fetchone()
+        
+        # Получаем статистику за вчера для сравнения
+        cursor.execute('SELECT * FROM daily_stats WHERE date = ?', (yesterday,))
+        yesterday_stats = cursor.fetchone()
+        
+        # Получаем топ операций по трафику
+        cursor.execute('''
+            SELECT operation, COUNT(*) as count, SUM(data_size) as total_size
+            FROM traffic_log
+            WHERE DATE(timestamp) = ?
+            GROUP BY operation
+            ORDER BY total_size DESC
+            LIMIT 5
+        ''', (today,))
+        top_operations = cursor.fetchall()
+        
+        conn.close()
+        
+        # Формируем отчет
+        report = f"📊 ОТЧЕТ ПО ТРАФИКУ ЗА {today}\n"
+        report += "=" * 40 + "\n"
+        
+        if today_stats:
+            report += f"📨 Сообщений отправлено: {today_stats[1] or 0}\n"
+            report += f"📹 Медиафайлов отправлено: {today_stats[2] or 0}\n"
+            report += f"📤 Трафик отправлен: {(today_stats[3] or 0) / 1024 / 1024:.2f} MB\n"
+            report += f"🤖 OpenAI запросов: {today_stats[4] or 0}\n"
+            report += f"🚫 Заблокированных пользователей: {today_stats[6] or 0}\n"
+            report += f"👤 Новых пользователей: {today_stats[7] or 0}\n"
+            report += f"✅ Активных пользователей: {today_stats[8] or 0}\n"
+        
+        if top_operations:
+            report += "\n🔝 ТОП ОПЕРАЦИЙ ПО ТРАФИКУ:\n"
+            for op, count, size in top_operations:
+                report += f"  • {op}: {count} раз, {(size or 0) / 1024:.1f} KB\n"
+        
+        return report
 
 # Глобальный экземпляр базы данных
 db = Database()

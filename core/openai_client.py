@@ -94,6 +94,13 @@ class OpenAIClient:
         if not client:
             return None
         
+        # Логируем начало запроса к OpenAI
+        start_time = datetime.now()
+        from core.database import db
+        
+        request_size = len(message.encode('utf-8'))
+        db.log_traffic("openai_request_start", user_id, "text", request_size, "openai_message")
+        
         # Проверяем, нужно ли сбросить thread (ежедневный сброс в 00:00 МСК)
         from core.database import db
         thread_info = db.get_openai_thread(user_id)
@@ -187,9 +194,21 @@ class OpenAIClient:
                 for message in messages.data:
                     if message.role == 'assistant':
                         response_text = message.content[0].text.value
+                        
+                        # Логируем успешный ответ
+                        end_time = datetime.now()
+                        duration_ms = int((end_time - start_time).total_seconds() * 1000)
+                        response_size = len(response_text.encode('utf-8'))
+                        
+                        db.log_traffic("openai_response_success", user_id, "text", response_size, "openai_response")
+                        db.update_daily_stats(openai_requests=1, openai_bytes=request_size + response_size)
+                        
+                        logger.info(f"OpenAI запрос успешен для {user_id}, время: {duration_ms}ms, размер ответа: {response_size} байт")
+                        
                         return response_text
                 
                 logger.error(f"❌ No assistant message found for user {user_id}")
+                db.log_traffic("openai_error", user_id, "error", 0, None, "error", "No assistant message found")
             
             # Если timeout - отменяем run
             if wait_time >= max_wait:
@@ -202,6 +221,7 @@ class OpenAIClient:
                 except:
                     pass
                 logger.error(f"Timeout запроса для пользователя {user_id}")
+                db.log_traffic("openai_timeout", user_id, "error", 0, None, "error", "Request timeout")
                 return "🕐 Извини, милая, запрос занял слишком много времени. Попробуй еще раз с более простым вопросом ✨"
             
             # Обработка failed статуса

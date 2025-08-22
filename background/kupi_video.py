@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from aiogram import Bot
 from aiogram.types import FSInputFile
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from core.database import db
 from keyboards.inline import get_kupi_video_menu
 from utils.message_utils import send_split_message
@@ -121,40 +122,73 @@ async def send_kupi_video_to_user(bot: Bot, user_id: int) -> bool:
         bool: True если сообщение успешно отправлено
     """
     try:
+        # Проверяем, не заблокировал ли пользователь бота
+        if db.is_user_blocked(user_id):
+            logger.debug(f"Пользователь {user_id} в черном списке, пропускаем")
+            return False
+        
         # Получаем актуальные пути и текст
         video_path, text_content = get_kupi_content()
         
         # Сначала пробуем отправить видеокружок, если файл существует
         if os.path.exists(video_path):
             try:
-                # Проверяем размер файла (50 МБ лимит для видеокружков)
+                # Проверяем размер файла
                 file_size = os.path.getsize(video_path)
                 max_size = 50 * 1024 * 1024  # 50 МБ
                 
                 if file_size <= max_size:
-                    video = FSInputFile(video_path)
+                    # Проверяем есть ли file_id в кэше
+                    cached_file_id = db.get_media_file_id(video_path)
                     
-                    # Пробуем отправить как видеокружок
-                    try:
-                        await bot.send_video_note(user_id, video, request_timeout=120)
-                        logger.info(f"Купи-видеокружок отправлен пользователю {user_id}")
-                    except Exception as e:
-                        # Если у пользователя отключены голосовые/видео сообщения, отправляем как обычное видео
-                        if "VOICE_MESSAGES_FORBIDDEN" in str(e):
-                            video = FSInputFile(video_path)
-                            await bot.send_video(user_id, video, request_timeout=120)
-                            logger.info(f"Купи-видео отправлено как обычное видео пользователю {user_id} (видеокружки запрещены)")
-                        else:
-                            # Проверяем, заблокирован ли бот пользователем
-                            if "bot was blocked by the user" in str(e) or "Forbidden" in str(e):
-                                logger.debug(f"Пользователь {user_id} заблокировал бота, пропускаем")
+                    if cached_file_id:
+                        # Используем кэшированный file_id
+                        try:
+                            await bot.send_video_note(user_id, cached_file_id, request_timeout=30)
+                            logger.info(f"Купи-видеокружок отправлен через file_id пользователю {user_id}")
+                            db.log_traffic("kupi_video_cached", user_id, "video_note", 100, video_path)
+                            db.update_daily_stats(total_media_sent=1, total_bytes_sent=100)
+                        except Exception as e:
+                            if "VOICE_MESSAGES_FORBIDDEN" in str(e):
+                                await bot.send_video(user_id, cached_file_id, request_timeout=30)
+                                logger.info(f"Купи-видео отправлено как обычное видео через file_id пользователю {user_id}")
+                                db.log_traffic("kupi_video_cached", user_id, "video", 100, video_path)
                             else:
-                                logger.warning(f"Не удалось отправить видео пользователю {user_id}: {e}")
+                                raise e
+                    else:
+                        # Первая отправка - загружаем файл и сохраняем file_id
+                        video = FSInputFile(video_path)
+                        
+                        try:
+                            message = await bot.send_video_note(user_id, video, request_timeout=120)
+                            # Сохраняем file_id для будущего использования
+                            if message.video_note:
+                                db.save_media_file_id(video_path, message.video_note.file_id, "video_note", file_size)
+                                logger.info(f"Купи-видеокружок отправлен и file_id сохранен для {video_path}")
+                            db.log_traffic("kupi_video_upload", user_id, "video_note", file_size, video_path)
+                            db.update_daily_stats(total_media_sent=1, total_bytes_sent=file_size)
+                        except Exception as e:
+                            if "VOICE_MESSAGES_FORBIDDEN" in str(e):
+                                video = FSInputFile(video_path)
+                                message = await bot.send_video(user_id, video, request_timeout=120)
+                                # Сохраняем file_id
+                                if message.video:
+                                    db.save_media_file_id(video_path, message.video.file_id, "video", file_size)
+                                logger.info(f"Купи-видео отправлено как обычное видео и file_id сохранен")
+                                db.log_traffic("kupi_video_upload", user_id, "video", file_size, video_path)
+                                db.update_daily_stats(total_media_sent=1, total_bytes_sent=file_size)
+                            else:
+                                raise e
                     
                     # Небольшая пауза перед отправкой текста
                     await asyncio.sleep(1)
                 else:
                     logger.warning(f"Купи-видео слишком большое: {file_size / 1024 / 1024:.1f} МБ (максимум 50 МБ)")
+            except TelegramForbiddenError:
+                # Пользователь заблокировал бота
+                db.mark_user_blocked(user_id, "Bot blocked by user")
+                logger.debug(f"Пользователь {user_id} заблокировал бота, добавлен в черный список")
+                return False
             except Exception as e:
                 logger.warning(f"Ошибка при работе с видео файлом: {e}")
         else:
@@ -170,18 +204,20 @@ async def send_kupi_video_to_user(bot: Bot, user_id: int) -> bool:
         
         # Отмечаем в БД что сообщение отправлено
         db.mark_kupi_video_sent(user_id, video_path if os.path.exists(video_path) else "text_only")
+        db.log_traffic("kupi_text", user_id, "text", len(text_content.encode('utf-8')), "text_only")
+        db.update_daily_stats(total_messages=1)
         logger.info(f"Купи-сообщение отправлено пользователю {user_id}")
         return True
         
+    except TelegramForbiddenError:
+        # Пользователь заблокировал бота
+        db.mark_user_blocked(user_id, "Bot blocked by user")
+        logger.debug(f"Пользователь {user_id} заблокировал бота, добавлен в черный список")
+        db.update_daily_stats(blocked_users_count=1)
+        return False
     except Exception as e:
-        # Проверяем, заблокирован ли бот пользователем
-        error_message = str(e)
-        if "bot was blocked by the user" in error_message or "Forbidden" in error_message:
-            # Тихо логируем блокировку на уровне DEBUG
-            logger.debug(f"Пользователь {user_id} заблокировал бота, пропускаем")
-        else:
-            # Для других ошибок логируем как ERROR
-            logger.error(f"Ошибка отправки купи-сообщения пользователю {user_id}: {e}")
+        logger.error(f"Ошибка отправки купи-сообщения пользователю {user_id}: {e}")
+        db.log_traffic("kupi_error", user_id, "error", 0, video_path if 'video_path' in locals() else None, "error", str(e))
         return False
 
 async def process_kupi_video_queue(bot: Bot):
@@ -209,6 +245,11 @@ async def process_kupi_video_queue(bot: Bot):
         
         for user_id in users_to_send:
             try:
+                # Пропускаем заблокированных пользователей
+                if db.is_user_blocked(user_id):
+                    logger.debug(f"Пользователь {user_id} в черном списке, пропускаем")
+                    continue
+                
                 success = await send_kupi_video_to_user(bot, user_id)
                 if success:
                     success_count += 1
@@ -219,14 +260,7 @@ async def process_kupi_video_queue(bot: Bot):
                 await asyncio.sleep(1)
                 
             except Exception as e:
-                # Проверяем, заблокирован ли бот пользователем
-                error_message = str(e)
-                if "bot was blocked by the user" in error_message or "Forbidden" in error_message:
-                    # Тихо логируем блокировку на уровне DEBUG
-                    logger.debug(f"Пользователь {user_id} заблокировал бота, пропускаем")
-                else:
-                    # Для других ошибок логируем как ERROR
-                    logger.error(f"Критическая ошибка при отправке купи-видео пользователю {user_id}: {e}")
+                logger.error(f"Критическая ошибка при отправке купи-видео пользователю {user_id}: {e}")
                 error_count += 1
         
         if success_count > 0 or error_count > 0:

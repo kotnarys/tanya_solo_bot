@@ -3,11 +3,14 @@ import os
 from datetime import datetime, timedelta
 from aiogram import Bot
 from aiogram.types import FSInputFile, InputMediaPhoto
+from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
 from keyboards.inline import get_avatar_info_menu, get_helps_menu, get_reviews_menu, get_tariffs_menu
 from core.config import TEXTS, IMAGES, REVIEWS_IMAGES
-# from promo_utils import get_tariffs_text_with_promo  # Удален файл promo_utils.py
 from core.database import db
 from utils.message_utils import send_split_message
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Словарь для отслеживания последней активности пользователей
 user_last_activity = {}
@@ -42,6 +45,79 @@ def update_user_activity_start_only(user_id: int):
     # Сбрасываем этап автоспама на 0, но НЕ отключаем в БД
     user_spam_stage[user_id] = 0
 
+async def send_video_with_cache(bot: Bot, user_id: int, video_path: str) -> bool:
+    """
+    Отправляет видео с использованием кэша file_id
+    """
+    try:
+        file_size = os.path.getsize(video_path)
+        max_size = 50 * 1024 * 1024  # 50 МБ
+        
+        if file_size > max_size:
+            logger.warning(f"Видео слишком большое: {file_size / 1024 / 1024:.1f} МБ")
+            return False
+        
+        # Проверяем кэшированный file_id
+        cached_file_id = db.get_media_file_id(video_path)
+        
+        if cached_file_id:
+            # Используем кэшированный file_id
+            await bot.send_video_note(user_id, cached_file_id, request_timeout=30)
+            db.log_traffic("auto_spam_video_cached", user_id, "video_note", 100, video_path)
+            db.update_daily_stats(total_media_sent=1, total_bytes_sent=100)
+            logger.info(f"Видео отправлено через file_id пользователю {user_id}")
+        else:
+            # Первая отправка - загружаем файл
+            video = FSInputFile(video_path)
+            message = await bot.send_video_note(user_id, video, request_timeout=120)
+            
+            # Сохраняем file_id
+            if message.video_note:
+                db.save_media_file_id(video_path, message.video_note.file_id, "video_note", file_size)
+                logger.info(f"Видео отправлено и file_id сохранен для {video_path}")
+            
+            db.log_traffic("auto_spam_video_upload", user_id, "video_note", file_size, video_path)
+            db.update_daily_stats(total_media_sent=1, total_bytes_sent=file_size)
+        
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка отправки видео: {e}")
+        return False
+
+async def send_photo_with_cache(bot: Bot, user_id: int, image_path: str, caption: str = None, reply_markup=None) -> bool:
+    """
+    Отправляет фото с использованием кэша file_id
+    """
+    try:
+        file_size = os.path.getsize(image_path)
+        
+        # Проверяем кэшированный file_id
+        cached_file_id = db.get_media_file_id(image_path)
+        
+        if cached_file_id:
+            # Используем кэшированный file_id
+            await bot.send_photo(user_id, cached_file_id, caption=caption, reply_markup=reply_markup)
+            db.log_traffic("auto_spam_photo_cached", user_id, "photo", 100, image_path)
+            db.update_daily_stats(total_media_sent=1, total_bytes_sent=100)
+            logger.info(f"Фото отправлено через file_id пользователю {user_id}")
+        else:
+            # Первая отправка - загружаем файл
+            photo = FSInputFile(image_path)
+            message = await bot.send_photo(user_id, photo, caption=caption, reply_markup=reply_markup)
+            
+            # Сохраняем file_id
+            if message.photo:
+                db.save_media_file_id(image_path, message.photo[-1].file_id, "photo", file_size)
+                logger.info(f"Фото отправлено и file_id сохранен для {image_path}")
+            
+            db.log_traffic("auto_spam_photo_upload", user_id, "photo", file_size, image_path)
+            db.update_daily_stats(total_media_sent=1, total_bytes_sent=file_size)
+        
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка отправки фото: {e}")
+        return False
+
 async def send_next_spam_message(bot: Bot, user_id: int, stage: int):
     """
     Отправляет следующее сообщение автоспама в зависимости от этапа
@@ -52,6 +128,11 @@ async def send_next_spam_message(bot: Bot, user_id: int, stage: int):
         stage: этап автоспама (1-5)
     """
     try:
+        # Проверяем, не заблокировал ли пользователь бота
+        if db.is_user_blocked(user_id):
+            logger.debug(f"Пользователь {user_id} в черном списке, пропускаем автоспам")
+            return
+        
         if stage == 1:
             # 1. 2 Super Novosti - отправляем видео кружок и текст
             try:
@@ -66,23 +147,15 @@ async def send_next_spam_message(bot: Bot, user_id: int, stage: int):
                 # Отправляем видео кружок
                 video_path = "media/video/2_super_novosti.mp4"
                 if os.path.exists(video_path):
-                    # Проверяем размер файла (лимит 50MB для video note)
-                    file_size = os.path.getsize(video_path)
-                    max_size = 50 * 1024 * 1024  # 50 МБ
+                    await send_video_with_cache(bot, user_id, video_path)
+                
+                # Отправляем текст отдельно
+                await send_split_message(bot, text_content, user_id)
+                db.log_traffic("auto_spam_text", user_id, "text", len(text_content.encode('utf-8')), "2_super_novosti")
+                db.update_daily_stats(total_messages=1)
                     
-                    if file_size <= max_size:
-                        video_note = FSInputFile(video_path)
-                        await bot.send_video_note(user_id, video_note)
-                        # Отправляем текст отдельно
-                        await send_split_message(bot, text_content, user_id)
-                    else:
-                        # Если файл слишком большой, отправляем только текст
-                        await send_split_message(bot, text_content, user_id)
-                else:
-                    # Если видео нет, отправляем только текст
-                    await send_split_message(bot, text_content, user_id)
-                    
-            except Exception:
+            except Exception as e:
+                logger.error(f"Ошибка отправки 2 super novosti: {e}")
                 # В случае ошибки отправляем базовый текст
                 await send_split_message(bot, "😍 2 супер новости", user_id)
             
@@ -91,10 +164,8 @@ async def send_next_spam_message(bot: Bot, user_id: int, stage: int):
             image_path = IMAGES["what_is_avatar"]
             
             if os.path.exists(image_path):
-                photo = FSInputFile(image_path)
-                await bot.send_photo(
-                    user_id,
-                    photo,
+                await send_photo_with_cache(
+                    bot, user_id, image_path,
                     caption=TEXTS["what_is_avatar"],
                     reply_markup=get_avatar_info_menu()
                 )
@@ -105,16 +176,15 @@ async def send_next_spam_message(bot: Bot, user_id: int, stage: int):
                     user_id,
                     reply_markup=get_avatar_info_menu()
                 )
+            db.update_daily_stats(total_messages=1)
             
-        elif stage == 2:
-            # 2. С чем помогает
+        elif stage == 3:
+            # 3. С чем помогает
             image_path = IMAGES["what_helps"]
             
             if os.path.exists(image_path):
-                photo = FSInputFile(image_path)
-                await bot.send_photo(
-                    user_id,
-                    photo,
+                await send_photo_with_cache(
+                    bot, user_id, image_path,
                     caption=TEXTS["what_helps"],
                     reply_markup=get_helps_menu()
                 )
@@ -125,6 +195,7 @@ async def send_next_spam_message(bot: Bot, user_id: int, stage: int):
                     user_id,
                     reply_markup=get_helps_menu()
                 )
+            db.update_daily_stats(total_messages=1)
             
         elif stage == 4:
             # 4. Отзывы
@@ -136,8 +207,10 @@ async def send_next_spam_message(bot: Bot, user_id: int, stage: int):
                 reply_markup=get_reviews_menu()
             )
             
-            # Отправляем фотографии отзывов
+            # Отправляем фотографии отзывов с кэшированием
             media_group = []
+            total_size = 0
+            
             for image_path in REVIEWS_IMAGES:
                 if os.path.exists(image_path):
                     try:
@@ -145,20 +218,41 @@ async def send_next_spam_message(bot: Bot, user_id: int, stage: int):
                         max_size = 10 * 1024 * 1024  # 10 МБ
                         
                         if file_size <= max_size:
-                            photo = FSInputFile(image_path)
-                            media_group.append(InputMediaPhoto(media=photo))
-                    except Exception:
-                        pass
+                            # Проверяем кэш
+                            cached_file_id = db.get_media_file_id(image_path)
+                            
+                            if cached_file_id:
+                                media_group.append(InputMediaPhoto(media=cached_file_id))
+                                total_size += 100  # Минимальный размер для кэшированного
+                            else:
+                                photo = FSInputFile(image_path)
+                                media_group.append(InputMediaPhoto(media=photo))
+                                total_size += file_size
+                    except Exception as e:
+                        logger.error(f"Ошибка обработки фото отзыва {image_path}: {e}")
             
             if media_group:
                 # Разбиваем на группы по 10 фотографий
                 chunk_size = 10
                 for i in range(0, len(media_group), chunk_size):
                     chunk = media_group[i:i + chunk_size]
-                    await bot.send_media_group(user_id, chunk)
+                    messages = await bot.send_media_group(user_id, chunk)
+                    
+                    # Сохраняем file_id для новых фото
+                    for j, msg in enumerate(messages):
+                        if msg.photo and i + j < len(REVIEWS_IMAGES):
+                            img_path = REVIEWS_IMAGES[i + j]
+                            if not db.get_media_file_id(img_path):
+                                db.save_media_file_id(img_path, msg.photo[-1].file_id, "photo", 
+                                                    os.path.getsize(img_path))
                     
                     if i + chunk_size < len(media_group):
                         await asyncio.sleep(0.5)
+                
+                db.log_traffic("auto_spam_reviews", user_id, "media_group", total_size, "reviews")
+                db.update_daily_stats(total_media_sent=len(media_group), total_bytes_sent=total_size)
+            
+            db.update_daily_stats(total_messages=1)
             
         elif stage == 5:
             # 5. Тарифы - финальное сообщение
@@ -166,10 +260,8 @@ async def send_next_spam_message(bot: Bot, user_id: int, stage: int):
             text = TEXTS['tariffs_intro']
             
             if os.path.exists(image_path):
-                photo = FSInputFile(image_path)
-                await bot.send_photo(
-                    user_id,
-                    photo,
+                await send_photo_with_cache(
+                    bot, user_id, image_path,
                     caption=text,
                     reply_markup=get_tariffs_menu(user_id)
                 )
@@ -181,11 +273,19 @@ async def send_next_spam_message(bot: Bot, user_id: int, stage: int):
                     reply_markup=get_tariffs_menu(user_id)
                 )
             
+            db.update_daily_stats(total_messages=1)
+            
             # Отмечаем в базе данных, что спам завершен
             db.mark_spam_completed(user_id)
             
-    except Exception:
-        pass
+    except TelegramForbiddenError:
+        # Пользователь заблокировал бота
+        db.mark_user_blocked(user_id, "Bot blocked during auto spam")
+        db.update_daily_stats(blocked_users_count=1)
+        logger.debug(f"Пользователь {user_id} заблокировал бота во время автоспама")
+    except Exception as e:
+        logger.error(f"Ошибка отправки автоспама пользователю {user_id}, этап {stage}: {e}")
+        db.log_traffic("auto_spam_error", user_id, "error", 0, None, "error", str(e))
 
 async def start_auto_spam_task(bot: Bot):
     """
@@ -204,6 +304,10 @@ async def start_auto_spam_task(bot: Bot):
                 users_snapshot = dict(user_last_activity)
                 
                 for user_id, last_activity in users_snapshot.items():
+                    # Проверяем, не заблокировал ли пользователь бота
+                    if db.is_user_blocked(user_id):
+                        continue
+                    
                     time_diff = current_time - last_activity
                     minutes_since_activity = int(time_diff.total_seconds() // 60)
                     
@@ -233,8 +337,8 @@ async def start_auto_spam_task(bot: Bot):
                         await send_next_spam_message(bot, user_id, needed_stage)
                         user_spam_stage[user_id] = needed_stage
             
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Ошибка в автоспам задаче: {e}")
         
         # Проверяем каждые 10 секунд
         await asyncio.sleep(10)
